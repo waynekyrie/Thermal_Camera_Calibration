@@ -7,7 +7,7 @@ import copy
 
 BOARD_SIZE_R=7
 BOARD_SIZE_C=7
-CIRCLE_SIZE=5
+CIRCLE_SIZE=1
 MATCH_THRESH=0.85
 TEMPLATE_SIZE=26
 folder='thermal/'
@@ -44,6 +44,14 @@ def find_template(img,pro_img,tmp_size,template):
 				existed.append((pt[0],pt[1],cor[0],cor[1]))
 	return pro_img,points
 
+def img_maxvalue(img):
+	maxi=max(img[0])
+	for r in img:
+		if(max(r)>maxi):
+			maxi=max(r)
+	return maxi
+
+
 def find_corners(img):
 	'''
 	dst=cv2.cornerHarris(img,2,3,0.04)
@@ -63,7 +71,24 @@ def find_corners(img):
 				r_count+=r
 	cor=(c_count//(len(cor)),r_count//(len(cor)))
 	'''
-	cor=(13,13)
+	kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
+	i=cv2.filter2D(img,-1,kernel)
+	col_cum=0
+	col_count=0
+	row_cum=0
+	row_count=0
+	img_max=img_maxvalue(img)
+	for r in range(0,len(img)):
+		for c in range(0,len(img[r])):
+			if(img[r][c]>=img_max-10):
+				col_count+=1
+				row_count+=1
+				row_cum+=r
+				col_cum+=c
+			else:
+				i[r][c]=0
+	#print(col_count)
+	cor=(col_cum//col_count,row_cum//row_count)	
 	return cor
 
 def farthest(points,pt):
@@ -179,10 +204,10 @@ def reorder_points(file,points):
 				p2=p
 	
 	line=[]
-	line1,s1=points_on_line(points,p_start,p1,15)
-	line2,s2=points_on_line(points,p_start,p2,15)
+	line1,s1=points_on_line(points,p_start,p1,25)
+	line2,s2=points_on_line(points,p_start,p2,25)
 	
-	if(len(line1)>=len(line2)):
+	if(len(line1)>len(line2)):
 		s=s1
 		row_axis=copy.copy(line2)
 		col_axis=copy.copy(line1)
@@ -257,6 +282,7 @@ def resize_matrix(matrix):
 
 def draw_board(img,pt):
 	count=0
+	pre=(0,0)
 	for p in pt:
 		if(count//BOARD_SIZE_C==3):
 			count=0
@@ -268,34 +294,31 @@ def draw_board(img,pt):
 			color=(255,0,0)
 		p=p[0]
 		
-		cv2.circle(img,(p[1],p[0]),5,color)
+		cv2.circle(img,(p[1],p[0]),CIRCLE_SIZE,color)
+		#cv2.arrowedLine(img,(pre[1],pre[0]),(p[1],p[0]),color)
+		pre=p
 		count+=1
 
 def find_crosspoints(file,template):
 	img=cv2.imread(file)
 	pro_img=cv2.imread(file)
 	p_img=cv2.imread(file)
+	
 	template_size=TEMPLATE_SIZE
-
-
 	pro_img,points=find_template(img,pro_img,template_size,template)
 	#cv2.imshow('asf', pro_img)
 	#cv2.waitKey(0)
 	matrix=reorder_points(file,points)
 	pt=resize_matrix(matrix)
 	draw_board(p_img,pt)
-	if(len(pt)>0):
+	if(len(pt)==BOARD_SIZE_C*BOARD_SIZE_R):
 		ret=True
 	else:
 		ret=False
 	return ret,p_img,pt
 
-images=glob.glob('left*.jpg')
 images=glob.glob(folder+'thermal*.jpg')
-template=glob.glob('template/template*.jpg')
 template=glob.glob(folder+'template*.jpg')
-
-
 
 criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
 
@@ -308,12 +331,16 @@ objpoints = [] # 3d point in real world space
 imgpoints = [] # 2d points in image plane.
 
 for fname in images:
+	t1=time.time()
 	img=cv2.imread(fname)
+
 	gray = cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
     # Find the chess board corners
 	ret, pro_img,corners = find_crosspoints(fname,template)
-	cv2.imshow('daf',pro_img)
-	cv2.waitKey(0)
+	#cv2.imshow('daf',pro_img)
+	#cv2.waitKey(0)
+	t2=time.time()
+	print(t2-t1)
     # If found, add object points, image points (after refining them)
 	if ret == True:
 		for i in range(0,len(corners)):
@@ -327,14 +354,18 @@ for fname in images:
 
 ret, mtx, dist, rvecs, tvecs = cv2.calibrateCamera(objpoints, imgpoints, gray.shape[::-1],None,None)
 
+sc.save_calibration("calibration.txt",mtx,dist,rvecs,tvecs)
 
+for fname in images:
+	img=cv2.imread(fname)
+	h,w=img.shape[:2]
+	newcameramtx, roi=cv2.getOptimalNewCameraMatrix(mtx, dist, (w,h), 1, (w,h))
+	dst=cv2.undistort(img,mtx,dist,None,newcameramtx)
+	x, y, w, h = roi
+	#dst = dst[y:y+h, x:x+w]
 
-img=cv2.imread(folder+'thermal01.jpg')
-h,w=img.shape[:2]
-newcameramtx, roi=cv2.getOptimalNewCameraMatrix(mtx, dist, (w,h), 1, (w,h))
-dst=cv2.undistort(img,mtx,dist,None,newcameramtx)
-cv2.imshow('dst',dst)
-cv2.waitKey(0)
+	cv2.imshow('dst',dst)
+	cv2.waitKey(0)
 
 #########################################
 #re-projection error
