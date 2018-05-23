@@ -14,7 +14,6 @@ folder='thermal/'
 
 def find_template(img,pro_img,tmp_size,template):
 	img_gray=cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
-
 	existed=[]
 	points=[]
 	for temp_file in template:
@@ -28,17 +27,21 @@ def find_template(img,pro_img,tmp_size,template):
 		for pt in zip(*loc[::-1]):
 			new=True
 			for pre in existed:
-				if(np.sqrt(np.square(pt[0]-pre[0])+np.square(pt[1]-pre[1]))<18):
-					new=False
+				if(np.sqrt(np.square(pt[0]-pre[0])+np.square(pt[1]-pre[1]))<15):
+					if(res[pt[1]][pt[0]]>res[pre[1]][pre[0]]):
+						points.remove((pre[1]+pre[3],pre[0]+pre[2]))
+						existed.remove(pre)
+					else:	
+						new=False
 					break
 			if(new):
-				mask=img_gray[pt[1]:pt[1]+tmp_size,pt[0]:pt[0]+tmp_size]
+				mask=copy.copy(img_gray[pt[1]:pt[1]+tmp_size,pt[0]:pt[0]+tmp_size])
 				cor=find_corners(mask)
 				col=pt[0]+cor[0]
 				row=pt[1]+cor[1]
 				cv2.circle(pro_img,(col,row),CIRCLE_SIZE,(0,0,255))
 				points.append((row,col))
-				existed.append(pt)
+				existed.append((pt[0],pt[1],cor[0],cor[1]))
 	return pro_img,points
 
 def find_corners(img):
