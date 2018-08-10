@@ -1,12 +1,10 @@
 import cv2
 import numpy as np
 import glob
-import save_calibration as sc
-import time
 import copy
 
 CIRCLE_SIZE=1
-def find_template(img,pro_img,tmp_size,template,match_thresh):
+def find_template(img,pro_img,tmp_size,template,match_thresh,image_type,board_type):
 	img_gray=cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
 	existed=[]
 	points=[]
@@ -30,12 +28,13 @@ def find_template(img,pro_img,tmp_size,template,match_thresh):
 					break
 			if(new):
 				mask=copy.copy(img_gray[pt[1]:pt[1]+tmp_size,pt[0]:pt[0]+tmp_size])
-				cor=find_corners(mask)
+				cor=find_corners(mask,image_type,board_type)
 				col=pt[0]+cor[0]
 				row=pt[1]+cor[1]
-				cv2.circle(pro_img,(int(col),int(row)),CIRCLE_SIZE,(0,0,255))
 				points.append((row,col))
 				existed.append((pt[0],pt[1],cor[0],cor[1]))
+	for p in points:
+		cv2.circle(pro_img,(int(p[1]),int(p[0])),5,(0,0,255))
 	return pro_img,points
 
 def img_maxvalue(img):
@@ -45,20 +44,103 @@ def img_maxvalue(img):
 			maxi=max(r)
 	return maxi
 
-def find_corners(img):
+def img_minvalue(img):
+	mini=min(img[0])
+	for r in img:
+		if(min(r)<mini):
+			mini=min(r)
+	return mini
+
+def find_corners(img,image_type,board_type):
 	col_cum=0
 	col_count=0
 	row_cum=0
 	row_count=0
-	img_max=img_maxvalue(img)
-	for r in range(0,len(img)):
-		for c in range(0,len(img[r])):
-			if(img[r][c]>=img_max-10):
+	w=img.shape[0]
+	h=img.shape[1]
+
+	if(image_type=='thermal'):
+		kernel_size=int(w*1/3)
+		if(kernel_size%2==0):
+			kernel_size+=1
+		kernel=np.zeros((kernel_size,kernel_size),dtype=np.float32)
+		kernel[:,:]=-1
+		kernel[kernel_size//2][kernel_size//2]=kernel_size*kernel_size
+		sharp_img = cv2.filter2D(img, -1, kernel)
+		min_val=np.amin(sharp_img)
+		max_val=np.amax(sharp_img)
+		
+		if(board_type=='wired'):
+			for r in range(h):
+				for c in range(w):
+					if(sharp_img[r][c]<(min_val+max_val)/2):
+						sharp_img[r][c]=0
+					else:
+						sharp_img[r][c]=1
+			kernel[:,:]=0
+			kernel[:,kernel_size//2]=1
+			kernel[kernel_size//2,:]=1
+			kernel[kernel_size//2][kernel_size//2]=0
+			out_img = cv2.filter2D(sharp_img, -1, kernel)
+			max_val=np.amax(out_img)
+			for r in range(len(img)):
+				for c in range(len(img)):
+					if(r>=int(0.75*len(img)) or r<=int(0.25*len(img)) or c>=int(0.75*len(img)) or c<=int(0.25*len(img))):
+						out_img[r][c]=0
+					else:
+						if(out_img[r][c]>=max_val):
+							col_count+=1
+							row_count+=1
+							row_cum+=r
+							col_cum+=c
+							out_img[r][c]=255
+						else:
+							out_img[r][c]=0
+		elif(board_type=='chessboard'):
+			for r in range(h):
+				for c in range(w):
+					if(sharp_img[r][c]<(min_val+max_val)/2):
+						sharp_img[r][c]=0
+					else:
+						sharp_img[r][c]=255
+			kernel[:,:]=0
+			kernel[:,kernel_size//2]=1
+			kernel[kernel_size//2,:]=1
+			kernel[kernel_size//2][kernel_size//2]=0
+			out_img = cv2.filter2D(sharp_img, -1, kernel)
+			max_val=np.amax(out_img)
+			for r in range(len(img)):
+				for c in range(len(img)):
+					if(r>=int(0.75*len(img)) or r<=int(0.25*len(img)) or c>=int(0.75*len(img)) or c<=int(0.25*len(img))):
+						out_img[r][c]=0
+					else:
+						if(out_img[r][c]>=max_val):
+							col_count+=1
+							row_count+=1
+							row_cum+=r
+							col_cum+=c
+							out_img[r][c]=255
+						else:
+							out_img[r][c]=0
+		if(col_count==0 or row_count==0):
+			cor=(img.shape[0]/2,img.shape[1]/2)
+		else:
+			cor=(col_cum/col_count,row_cum/row_count)	
+	elif(image_type=='visual'):
+		corners=cv2.goodFeaturesToTrack(img,maxCorners=100,qualityLevel=0.05,minDistance=0,
+			useHarrisDetector=0)
+		for c in corners:
+			tmp=c[0]
+			if(tmp[1]>=0.25*img.shape[0] and tmp[1]<=0.75*img.shape[0] and tmp[0]>=0.25*img.shape[0] and tmp[0]<=0.75*img.shape[0]):
 				col_count+=1
 				row_count+=1
-				row_cum+=r
-				col_cum+=c
-	cor=(col_cum/col_count,row_cum/row_count)	
+				row_cum+=tmp[1]
+				col_cum+=tmp[0]
+		cor=(col_cum/col_count,row_cum/row_count)
+	else:
+		print('Unsupport img type')
+		cor=(img.shape[0]/2,img.shape[1]/2)
+	
 	return cor
 
 def farthest(points,pt):
@@ -72,7 +154,7 @@ def farthest(points,pt):
 	return max_p
 
 def top_p(points,board_r,board_c):
-	maxr=480;
+	maxr=1000;
 	maxc=0;
 	tlp=(0,0)
 	pt=[]
@@ -95,9 +177,9 @@ def top_p(points,board_r,board_c):
 					break
 	if(len(pt)>1):
 		p1=farthest(pt,pt[0])
-		pt,s=points_on_line(points,pt[0],p1,25)
+		pt,s=points_on_line(points,pt[0],p1,15)
 		for p in pt:
-			if(p[1]>maxc):
+			if(p[1]<maxc):
 				maxc=p[1]
 				tlp=p
 	else:
@@ -152,11 +234,12 @@ def sort_points_on_line(line,dist):
 		cur_min=tmp
 	return l
 
-def reorder_points(file,points,board_r,board_c):
+def reorder_points(file,points,board_r,board_c,dist_thresh):
 	p_start=top_p(points,board_r,board_c)
 	img=cv2.imread(file)
-	min_dist1=200
-	min_dist2=200
+	min_dist1=1000
+	min_dist2=1000
+	
 	p1=(0,0)
 	p2=(0,0)
 	for p in points:
@@ -170,10 +253,12 @@ def reorder_points(file,points,board_r,board_c):
 			elif(dist<min_dist2):
 				min_dist2=dist
 				p2=p
-	
 	line=[]
-	line1,s1=points_on_line(points,p_start,p1,25)
-	line2,s2=points_on_line(points,p_start,p2,25)
+	line1,s1=points_on_line(points,p_start,p1,dist_thresh)
+	line2,s2=points_on_line(points,p_start,p2,dist_thresh)
+	
+	if((len(line1)!=board_r or len(line2)!=board_c) and (len(line2)!=board_r or len(line1)!=board_c)):
+		return [line1]
 	if(len(line2)==len(line1)):
 		if(s1==None or (s2!=None and abs(s2)<abs(s1))):
 			s=s2
@@ -183,6 +268,10 @@ def reorder_points(file,points,board_r,board_c):
 			s=s1
 			row_axis=copy.copy(line2)
 			col_axis=copy.copy(line1)
+		else:
+			row_axis=copy.copy(line1)
+			col_axis=copy.copy(line2)
+			s=s2
 	else:
 		if(len(line1)>len(line2)):
 			s=s1
@@ -194,32 +283,43 @@ def reorder_points(file,points,board_r,board_c):
 			row_axis=copy.copy(line1)
 	p_next=(0,0)
 	l=[]
+
 	for r in row_axis:
 		min_dist_to_r=1000
 		for p in points:
-			if(s==None):
-				if(abs(p[1]-r[1])<20):
-					dist=p_to_p(r,p)
-					if(dist<min_dist_to_r and p!=r):
-						p_next=p
-						min_dist_to_r=dist
-			else:
-				a=s
-				b=-1
-				c=(-1)*s*r[1]+r[0]
-				d=abs(a*p[1]+b*p[0]+c)/np.sqrt(np.square(a)+np.square(b))
-				if(d<15):
-					dist=p_to_p(r,p)
-					if(dist<min_dist_to_r and p!=r):
-						min_dist_to_r=dist
-						p_next=p
-		tmp_line,tmp_s=points_on_line(points,r,p_next,15)
+			if(p not in row_axis):
+				if(s==None):
+					if(abs(p[1]-r[1])<dist_thresh):
+						dist=p_to_p(r,p)
+						if(dist<min_dist_to_r and p!=r):
+							p_next=p
+							min_dist_to_r=dist
+				else:
+					a=s
+					b=-1
+					c=(-1)*s*r[1]+r[0]
+					d=abs(a*p[1]+b*p[0]+c)/np.sqrt(np.square(a)+np.square(b))
+					if(d<dist_thresh):
+						dist=p_to_p(r,p)
+						if(dist<min_dist_to_r and p!=r):
+							min_dist_to_r=dist
+							p_next=p
+		tmp_line,tmp_s=points_on_line(points,r,p_next,dist_thresh)
+			
 		p_far=farthest(tmp_line,r)
-		tmp_line1,tmp_s1=points_on_line(points,r,p_far,15)
+		tmp_line1,tmp_s1=points_on_line(points,r,p_far,dist_thresh)
 		for p in tmp_line1:
 			if(p not in tmp_line):
 				tmp_line.append(p)
-		line.append(tmp_line)
+		dist=[]
+		for p in tmp_line:
+			if(p==r):
+				dist.append(0)
+			else:
+				d=p_to_p(r,p)
+				dist.append(d)
+		tmp_line=sort_points_on_line(tmp_line,dist)
+		line.append(tmp_line)	
 	return line
 
 def resize_matrix(matrix,board_r,board_c):
@@ -255,9 +355,9 @@ def resize_matrix(matrix,board_r,board_c):
 	return pt
 
 
-def draw_board(img,pt,board_r,board_c):
+def draw_board(img,pt,board_r,board_c,arrow=False):
 	count=0
-	pre=(0,0)
+	first=1
 	BOARD_SIZE_C=board_c
 	BOARD_SIZE_R=board_r
 	for p in pt:
@@ -270,7 +370,11 @@ def draw_board(img,pt,board_r,board_c):
 		elif(count//BOARD_SIZE_C==2):
 			color=(255,0,0)
 		p=p[0]
-		
+		if(arrow):
+			if(first):
+				first=0
+				pre=p
+			cv2.arrowedLine(img,(int(pre[1]),int(pre[0])),(int(p[1]),int(p[0])),color)
 		cv2.circle(img,(int(p[1]),int(p[0])),CIRCLE_SIZE,color)
 		pre=p
 		count+=1
@@ -278,29 +382,84 @@ def draw_board(img,pt,board_r,board_c):
 def get_square_img_size(img):
 	return img.shape[0]
 
-def find_crosspoints(file,template,thresh,board_r,board_c):
+def find_crosspoints(file,template,thresh,board_r,board_c,image_type,board_type):
+
 	img=cv2.imread(file)
+	gray = cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
 	pro_img=cv2.imread(file)
 	template_size=get_square_img_size(cv2.imread(template[0]))
-	pro_img,points=find_template(img,pro_img,template_size,template,thresh)
-	matrix=reorder_points(file,points,board_r,board_c)
-	if(len(matrix)>0):
-		pre=len(matrix[0])
-	else:
-		return False,(0,0)#Detected no feature point
-	flag=True
-	#check every row has same amount of points
-	for l in matrix:
-		if(len(l)!=pre):
-			flag=False
+	pro_img,points=find_template(img,pro_img,template_size,template,thresh,image_type,board_type)
+	
+	#check amount of found crosspoints
+	if(len(points)!=len(set(points)) or len(set(points))!=board_r*board_c):
+		return False,[(0,0)]
+
+	for dist in range(0,30):
+		matrix=reorder_points(file,points,board_r,board_c,dist)
+		flag=True
+		#check every row has same amount of points
+		count=0
+		for l in matrix:
+			count+=len(l)
+			if(len(l)!=board_c):
+				flag=False
+		if(flag==True and len(matrix)==board_r and count==board_r*board_c):
 			break
-	if(flag==True):
-		pt=resize_matrix(matrix,board_r,board_c)
-	else:
-		return False,(0,0)
+	if(len(matrix)!=board_r or flag==False):
+		return False,[(0,0)]#Detected no feature point
+	pt=resize_matrix(matrix,board_r,board_c)
 	#check if detected points satisfy requirement
 	if(len(pt)==board_r*board_c):
 		ret=True
 	else:
 		ret=False
 	return ret,pt
+
+
+def opencv_find_crosspts(image_files,objp,row,col,draw_b=False):
+    imgpoints=[]
+    obj=[]
+    count=0
+    missed=[]
+    valid=[]
+    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001)
+    for fname in image_files:
+        img = cv2.imread(fname)
+        gray = cv2.cvtColor(img,cv2.COLOR_BGR2GRAY)
+        # Find the chess board corners
+        ret, corners = cv2.findChessboardCorners(gray, (col,row),None)
+        
+        # If found, add object points, image points (after refining them)
+        if ret == True:
+            corners2 = cv2.cornerSubPix(gray,corners,(11,11),(-1,-1),criteria)
+            points=[]
+            for r in corners2:
+            	tmp=r[0]
+            	points.append((tmp[1],tmp[0]))
+            for dist in range(0,30):
+            	matrix=reorder_points(fname,points,row,col,dist)
+            	flag=True
+            	pre=col
+            	#check every row has same amount of points
+            	for l in matrix:
+            		if(len(l)!=pre):
+            			flag=False
+            	if(flag==True and len(matrix)==row):
+            		break
+            pt=resize_matrix(matrix,row,col)
+            if(draw_b):
+            	draw_board(img,pt,row,col,arrow=True)
+            	cv2.imshow('draw_board',img)
+            if(cv2.waitKey(0)&0xFF==ord('q')):
+            	break
+            for i in range(0,len(pt)):
+            	for j in range(0,len(pt[i])):
+            		pt[i][j]=(np.float32(pt[i][j][1]),np.float32(pt[i][j][0]))
+            cor=np.array(pt)
+            imgpoints.append(cor)
+            obj.append(objp)
+            count+=1
+
+    imgpoints=np.array(imgpoints)
+    obj=np.array(obj)
+    return imgpoints,obj
