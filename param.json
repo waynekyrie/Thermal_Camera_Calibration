@@ -1,0 +1,18 @@
+{
+	"IMG_DIR":"Visual_img/",
+	"IMG_TYPE":"thermal",
+	"IMG_FORMAT":".jpg",
+	"BOARD_TYPE":"chessboard",
+	"TEMPLATE_DIR" : "0711template/test/",
+	"TEMPLATE_FORMAT":".jpg",
+	"EXTRACT_TEMPLATE":1,
+	"TEMPLATE_SIZE":26,
+	"BOARD_ROW":6,
+	"BOARD_COL":8,
+	"MATCH_THRESH":0.9,
+	"VISUALIZE":1,
+	"SAVE_UNDISTORT_IMG":1,
+	"SAVE_CALIB_RESULT" :1,
+	"RESULT_DIR":""
+
+}
